@@ -12,7 +12,7 @@ const tradeCategories = ['Material', 'Labor', 'Equipment', 'Overhead', 'Permit',
 const stockingUnits = ['Bag', 'Ton', 'KG', 'Piece', 'Cubic Meter', 'Litre', 'Feet'];
 const siteStatuses = ['Upcoming', 'Active', 'On Hold', 'Completed', 'Cancelled'];
 
-// Helper to generate a random date within the last 6 months
+// Helper to generate a random date within the last 12 months
 const randomDate = (start: Date, end: Date) => {
   return new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime())).toISOString().split('T')[0];
 };
@@ -25,7 +25,7 @@ const generateDummyData = (): Partial<AppState> => {
   const invoices: Invoice[] = [];
   const incomes: Income[] = [];
 
-  // 1. Generate 500 Projects (450 sites, 50 godowns)
+  // 1. Generate 500 Projects
   for (let i = 1; i <= 500; i++) {
     const isGodown = i > 450;
     projects.push({
@@ -35,7 +35,7 @@ const generateDummyData = (): Partial<AppState> => {
       location: `Zone ${Math.ceil(i / 50)}, Sector ${i % 10}`,
       startDate: randomDate(new Date(2023, 0, 1), new Date()),
       endDate: '',
-      budget: isGodown ? 0 : Math.floor(Math.random() * 9000000) + 1000000,
+      budget: isGodown ? 0 : Math.floor(Math.random() * 50000000) + 5000000,
       status: isGodown ? 'Active' : siteStatuses[Math.floor(Math.random() * siteStatuses.length)],
       description: `Description for ${isGodown ? 'Godown' : 'Site'} ${i}`,
       contactNumber: `+91 90000 ${10000 + i}`,
@@ -52,7 +52,7 @@ const generateDummyData = (): Partial<AppState> => {
       address: `Industrial Area Phase ${Math.ceil(i / 100)}, Block ${i % 20}`,
       category: tradeCategories[Math.floor(Math.random() * tradeCategories.length)],
       email: `contact@supplier${i}.com`,
-      balance: 0 // Will be updated by transactions
+      balance: 0
     });
   }
 
@@ -75,15 +75,15 @@ const generateDummyData = (): Partial<AppState> => {
     invoices.push({
       id: `inv-${i}`,
       projectId: projId,
-      date: randomDate(new Date(2024, 0, 1), new Date()),
-      amount: Math.floor(Math.random() * 500000) + 50000,
-      description: `Milestone Billing ${Math.ceil(i / 10)}`,
+      date: randomDate(new Date(2023, 6, 1), new Date(2024, 0, 1)),
+      amount: Math.floor(Math.random() * 2000000) + 500000,
+      description: `Phase ${Math.ceil(i / 20)} Construction Milestone`,
       status: 'Sent',
       dueDate: randomDate(new Date(), new Date(2025, 11, 31))
     });
   }
 
-  // 5. Generate 500 Transactions (Expenses/Stock Inwards)
+  // 5. Generate 500 Transactions (Expenses)
   for (let i = 1; i <= 500; i++) {
     const isMaterial = Math.random() > 0.3;
     const projId = projects[Math.floor(Math.random() * projects.length)].id;
@@ -92,27 +92,23 @@ const generateDummyData = (): Partial<AppState> => {
     const qty = isMaterial ? Math.floor(Math.random() * 100) + 1 : undefined;
     const amount = isMaterial ? (qty! * materials.find(m => m.id === matId)?.costPerUnit!) : (Math.floor(Math.random() * 10000) + 500);
 
-    const expense: Expense = {
+    expenses.push({
       id: `e-${i}`,
-      date: randomDate(new Date(2024, 0, 1), new Date()),
+      date: randomDate(new Date(2023, 6, 1), new Date()),
       projectId: projId,
       vendorId: vendorId,
       materialId: matId,
       materialQuantity: qty,
       amount: amount,
       paymentMethod: 'Bank',
-      notes: `Bulk generated transaction record ${i}`,
+      notes: `Record #${i}: Automatic transaction logging`,
       category: isMaterial ? 'Material' : tradeCategories[Math.floor(Math.random() * tradeCategories.length)],
       inventoryAction: isMaterial ? 'Purchase' : undefined
-    };
+    });
 
-    expenses.push(expense);
-
-    // Update Vendor Balance if it's a purchase
     const vendor = vendors.find(v => v.id === vendorId);
     if (vendor) vendor.balance += amount;
 
-    // Update Material History and Totals
     if (matId && isMaterial) {
       const material = materials.find(m => m.id === matId);
       if (material) {
@@ -120,16 +116,34 @@ const generateDummyData = (): Partial<AppState> => {
         material.history = material.history || [];
         material.history.push({
           id: `sh-e-${i}`,
-          date: expense.date,
+          date: randomDate(new Date(2023, 6, 1), new Date()),
           type: 'Purchase',
           quantity: qty!,
           projectId: projId,
           vendorId: vendorId,
           unitPrice: material.costPerUnit,
-          note: expense.notes
+          note: `Auto-generated inward`
         });
       }
     }
+  }
+
+  // 6. Generate 5000 Income (Revenue Ledger) entries
+  for (let i = 1; i <= 5000; i++) {
+    const projIndex = Math.floor(Math.random() * 450); // Sites only
+    const project = projects[projIndex];
+    const projectInvoices = invoices.filter(inv => inv.projectId === project.id);
+    const invoiceId = projectInvoices.length > 0 ? projectInvoices[Math.floor(Math.random() * projectInvoices.length)].id : undefined;
+    
+    incomes.push({
+      id: `inc-${i}`,
+      projectId: project.id,
+      date: randomDate(new Date(2023, 8, 1), new Date()),
+      amount: Math.floor(Math.random() * 50000) + 5000,
+      description: `Payment Receipt ${i} against Phase Milestone`,
+      method: ['Bank', 'Cash', 'Online'][Math.floor(Math.random() * 3)] as any,
+      invoiceId: invoiceId
+    });
   }
 
   return { projects, vendors, materials, expenses, invoices, incomes };
@@ -145,7 +159,7 @@ export const INITIAL_STATE: AppState = {
   materials: dummy.materials || [],
   expenses: dummy.expenses || [],
   payments: [],
-  incomes: [],
+  incomes: dummy.incomes || [],
   invoices: dummy.invoices || [],
   tradeCategories: tradeCategories,
   stockingUnits: stockingUnits,
