@@ -19,7 +19,8 @@ import {
   Redo2,
   Check,
   Bot,
-  FileText
+  FileText,
+  AlertCircle
 } from 'lucide-react';
 import { useApp } from '../AppContext';
 import { SyncCenter } from './SyncCenter';
@@ -109,13 +110,45 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTa
 
           <div className="flex items-center gap-3">
             <div className="hidden sm:flex items-center bg-slate-100 dark:bg-slate-700 rounded-lg p-1">
-              <button onClick={undo} disabled={!canUndo} className="p-1.5 hover:bg-white dark:hover:bg-slate-600 disabled:opacity-20 rounded transition-all"><Undo2 size={16} /></button>
-              <button onClick={redo} disabled={!canRedo} className="p-1.5 hover:bg-white dark:hover:bg-slate-600 disabled:opacity-20 rounded transition-all"><Redo2 size={16} /></button>
+              <button onClick={undo} disabled={!canUndo} title="Undo Action" className="p-1.5 hover:bg-white dark:hover:bg-slate-600 disabled:opacity-20 rounded transition-all text-slate-500"><Undo2 size={16} /></button>
+              <button onClick={redo} disabled={!canRedo} title="Redo Action" className="p-1.5 hover:bg-white dark:hover:bg-slate-600 disabled:opacity-20 rounded transition-all text-slate-500"><Redo2 size={16} /></button>
             </div>
-            <button onClick={() => setShowSyncCenter(true)} className={`p-2 rounded-lg border transition-all ${syncId ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>
-              {isSyncing ? <RefreshCw size={18} className="animate-spin" /> : syncId ? <Cloud size={18} /> : <WifiOff size={18} />}
+            
+            {/* Database Sync Status Indicator */}
+            <button 
+              onClick={() => setShowSyncCenter(true)} 
+              className={`p-2 rounded-lg border transition-all relative flex items-center justify-center group ${
+                syncError 
+                  ? 'bg-red-50 border-red-200 text-red-600 shadow-sm' 
+                  : isSyncing 
+                    ? 'bg-blue-50 border-blue-200 text-blue-600' 
+                    : syncId 
+                      ? 'bg-emerald-50 border-emerald-100 text-emerald-600' 
+                      : 'bg-slate-50 border-slate-200 text-slate-400'
+              }`}
+            >
+              {isSyncing ? (
+                <RefreshCw size={18} className="animate-spin" />
+              ) : syncError ? (
+                <div className="relative">
+                  {syncId ? <Cloud size={18} /> : <WifiOff size={18} />}
+                  <AlertCircle size={10} className="absolute -top-1.5 -right-1.5 text-red-600 fill-white" />
+                </div>
+              ) : syncId ? (
+                <Cloud size={18} />
+              ) : (
+                <WifiOff size={18} />
+              )}
+              
+              {/* Tooltip for Error */}
+              {syncError && (
+                <div className="absolute top-full mt-2 right-0 bg-red-600 text-white text-[9px] font-black px-2 py-1 rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-[100] pointer-events-none">
+                  DATABASE SYNC FAILED
+                </div>
+              )}
             </button>
-            <button onClick={() => setActiveTab('settings')} className="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg shadow-sm"><SettingsIcon size={18} /></button>
+
+            <button onClick={() => setActiveTab('settings')} className="p-2 text-slate-500 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg shadow-sm hover:bg-slate-50 transition-all"><SettingsIcon size={18} /></button>
           </div>
         </header>
 
