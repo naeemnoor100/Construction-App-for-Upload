@@ -1,45 +1,55 @@
-import React, { useState } from 'react';
+
+import React, { useState, useRef } from 'react';
 import { 
   User, 
+  Users,
   Building2, 
   Globe, 
-  Bell, 
-  ShieldCheck, 
   Save, 
-  CheckCircle2, 
-  Mail, 
-  Smartphone,
-  CreditCard,
-  Cloud,
-  ChevronRight,
-  LogOut,
-  Zap,
-  Plus,
-  X,
-  List,
-  Package,
-  Layers,
-  Activity,
-  Database,
-  Code2,
-  Terminal,
-  LayoutGrid,
-  Scale,
-  Copy
+  LogOut, 
+  Plus, 
+  X, 
+  List, 
+  Package, 
+  Layers, 
+  Activity, 
+  Database, 
+  Code2, 
+  Terminal, 
+  Scale, 
+  Copy,
+  DownloadCloud,
+  UploadCloud,
+  FileJson,
+  FileSpreadsheet,
+  ShieldCheck,
+  Archive,
+  AlertTriangle,
+  FileUp,
+  Server,
+  RefreshCw
 } from 'lucide-react';
 import { useApp } from '../AppContext';
+import { AppState, Vendor, Material } from '../types';
 
 export const Settings: React.FC = () => {
   const { 
-    currentUser, updateUser, syncId, theme, setTheme, 
+    currentUser, updateUser, theme, setTheme, 
     tradeCategories, addTradeCategory, removeTradeCategory,
     stockingUnits, addStockingUnit, removeStockingUnit,
     siteStatuses, addSiteStatus, removeSiteStatus,
-    allowDecimalStock, setAllowDecimalStock
+    allowDecimalStock, setAllowDecimalStock,
+    projects, vendors, materials, expenses, incomes, invoices, payments,
+    importState, addVendor, addMaterial
   } = useApp();
   
-  const [activeSection, setActiveSection] = useState<'profile' | 'company' | 'system' | 'master-lists' | 'database'>('profile');
+  const [activeSection, setActiveSection] = useState<'profile' | 'company' | 'system' | 'master-lists' | 'database' | 'export' | 'import'>('profile');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [importing, setImporting] = useState(false);
+
+  const jsonFileInputRef = useRef<HTMLInputElement>(null);
+  const csvVendorInputRef = useRef<HTMLInputElement>(null);
+  const csvMaterialInputRef = useRef<HTMLInputElement>(null);
 
   const [newTradeCat, setNewTradeCat] = useState('');
   const [newStockUnit, setNewStockUnit] = useState('');
@@ -121,6 +131,147 @@ CREATE TABLE expenses (
     alert("Database schema copied to clipboard!");
   };
 
+  const downloadFile = (data: string, filename: string, type: string) => {
+    const blob = new Blob([data], { type });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const handleExportJSON = () => {
+    const fullState = {
+      projects, vendors, materials, expenses, incomes, invoices, payments,
+      tradeCategories, stockingUnits, siteStatuses, exportDate: new Date().toISOString()
+    };
+    downloadFile(JSON.stringify(fullState, null, 2), `BuildTrackPro_Backup_${new Date().toISOString().split('T')[0]}.json`, 'application/json');
+  };
+
+  const handleExportCSV = (type: 'projects' | 'expenses' | 'inventory') => {
+    let csv = '';
+    let filename = '';
+
+    if (type === 'projects') {
+      filename = `Projects_Backup_${Date.now()}.csv`;
+      csv = 'ID,Name,Client,Location,Budget,Status\n' + 
+            projects.map(p => `"${p.id}","${p.name}","${p.client}","${p.location}",${p.budget},"${p.status}"`).join('\n');
+    } else if (type === 'expenses') {
+      filename = `Ledger_Backup_${Date.now()}.csv`;
+      csv = 'Date,Category,Project,Amount,Method,Notes\n' + 
+            expenses.map(e => {
+              const p = projects.find(proj => proj.id === e.projectId);
+              return `"${e.date}","${e.category}","${p?.name || 'N/A'}",${e.amount},"${e.paymentMethod}","${e.notes.replace(/"/g, '""')}"`;
+            }).join('\n');
+    } else if (type === 'inventory') {
+      filename = `Inventory_Backup_${Date.now()}.csv`;
+      csv = 'ID,Name,Unit,CostPerUnit,InStock\n' + 
+            materials.map(m => `"${m.id}","${m.name}","${m.unit}",${m.costPerUnit},${m.totalPurchased - m.totalUsed}`).join('\n');
+    }
+
+    downloadFile(csv, filename, 'text/csv');
+  };
+
+  const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!confirm("CRITICAL WARNING: Importing a database file will OVERWRITE all current records. This action cannot be undone. Proceed?")) {
+      if (jsonFileInputRef.current) jsonFileInputRef.current.value = '';
+      return;
+    }
+
+    setImporting(true);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const content = event.target?.result as string;
+        const importedData = JSON.parse(content) as AppState;
+        if (!importedData.projects) throw new Error("Invalid format");
+        await importState({ ...importedData, theme: theme });
+        alert("Success! System restored.");
+        window.location.reload();
+      } catch (err) {
+        alert("Import failed. Ensure the file is a valid BuildTrack backup.");
+      } finally {
+        setImporting(false);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const parseCSV = (text: string) => {
+    const lines = text.split('\n');
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
+    return lines.slice(1).filter(l => l.trim()).map(line => {
+      const values = line.split(',').map(v => v.trim().replace(/"/g, ''));
+      return headers.reduce((obj: any, header, i) => {
+        obj[header] = values[i];
+        return obj;
+      }, {});
+    });
+  };
+
+  const handleImportCSVVendors = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const data = parseCSV(event.target?.result as string);
+        let count = 0;
+        for (const item of data) {
+          if (item.name) {
+            await addVendor({
+              id: 'v' + Date.now() + Math.random().toString(36).slice(2, 5),
+              name: item.name,
+              phone: item.phone || '',
+              address: item.address || '',
+              category: item.category || tradeCategories[0],
+              balance: parseFloat(item.balance) || 0
+            });
+            count++;
+          }
+        }
+        alert(`Successfully imported ${count} suppliers.`);
+      } catch (err) {
+        alert("CSV Import Error. Ensure headers are: name, phone, category, address, balance");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleImportCSVMaterials = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const data = parseCSV(event.target?.result as string);
+        let count = 0;
+        for (const item of data) {
+          if (item.name) {
+            await addMaterial({
+              id: 'm' + Date.now() + Math.random().toString(36).slice(2, 5),
+              name: item.name,
+              unit: item.unit || stockingUnits[0],
+              costPerUnit: parseFloat(item.costperunit) || parseFloat(item.cost) || 0,
+              totalPurchased: 0,
+              totalUsed: 0,
+              history: []
+            });
+            count++;
+          }
+        }
+        alert(`Successfully imported ${count} materials.`);
+      } catch (err) {
+        alert("CSV Import Error. Ensure headers are: name, unit, costperunit");
+      }
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex justify-between items-end">
@@ -130,7 +281,7 @@ CREATE TABLE expenses (
         </div>
         <div className="hidden sm:block">
           <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
-            Version 2.5.0-Stable
+            Version 2.6.0-Pro
           </span>
         </div>
       </div>
@@ -140,21 +291,22 @@ CREATE TABLE expenses (
           <button onClick={() => setActiveSection('profile')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeSection === 'profile' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 hover:shadow-sm'}`}>
             <User size={18} /> <span className="text-sm font-bold">Personal Profile</span>
           </button>
-          <button onClick={() => setActiveSection('company')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeSection === 'company' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 hover:shadow-sm'}`}>
-            <Building2 size={18} /> <span className="text-sm font-bold">Company Info</span>
-          </button>
           <button onClick={() => setActiveSection('master-lists')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeSection === 'master-lists' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 hover:shadow-sm'}`}>
             <List size={18} /> <span className="text-sm font-bold">Master Lists</span>
           </button>
           <button onClick={() => setActiveSection('database')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeSection === 'database' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 hover:shadow-sm'}`}>
-            <Database size={18} /> <span className="text-sm font-bold">Database Connection</span>
+            <Server size={18} /> <span className="text-sm font-bold">SQL Integration</span>
+          </button>
+          <button onClick={() => setActiveSection('export')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeSection === 'export' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 hover:shadow-sm'}`}>
+            <DownloadCloud size={18} /> <span className="text-sm font-bold">Export Data</span>
+          </button>
+          <button onClick={() => setActiveSection('import')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeSection === 'import' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 hover:shadow-sm'}`}>
+            <UploadCloud size={18} /> <span className="text-sm font-bold">Import Data</span>
           </button>
           <button onClick={() => setActiveSection('system')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeSection === 'system' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 hover:shadow-sm'}`}>
             <Globe size={18} /> <span className="text-sm font-bold">System Defaults</span>
           </button>
-          
           <div className="pt-8 space-y-1">
-             <div className="px-4 py-2 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Support</div>
              <button className="w-full flex items-center gap-3 px-4 py-3 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 rounded-xl transition-all">
                <LogOut size={18} /> <span className="text-sm font-bold">Sign Out</span>
              </button>
@@ -163,6 +315,99 @@ CREATE TABLE expenses (
 
         <div className="flex-1">
           <div className="bg-white dark:bg-slate-800 rounded-[2.5rem] border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden animate-in fade-in slide-in-from-right-4">
+            
+            {activeSection === 'export' && (
+              <div className="p-8 space-y-8">
+                <div className="flex items-center gap-4 bg-indigo-600 p-6 rounded-[2rem] text-white shadow-xl">
+                  <div className="p-4 bg-white/10 rounded-2xl"><Archive size={32} /></div>
+                  <div>
+                    <h3 className="text-lg font-bold">Data Governance: Export</h3>
+                    <p className="text-[10px] font-bold uppercase text-indigo-200">System Backup & Reporting</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="p-6 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-[2rem] space-y-4">
+                    <div className="flex items-center gap-3 text-blue-600">
+                      <FileJson size={20} />
+                      <h4 className="font-bold text-sm uppercase tracking-tight">Full System Snapshot</h4>
+                    </div>
+                    <p className="text-xs text-slate-500 font-medium leading-relaxed">Download your entire project portfolio, supplier ledger, and material pool in a single encrypted JSON file for total data ownership.</p>
+                    <button onClick={handleExportJSON} className="w-full py-3.5 bg-white dark:bg-slate-800 border-2 border-slate-200 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center gap-2">
+                      <DownloadCloud size={16} /> Generate Master Backup (.JSON)
+                    </button>
+                  </div>
+
+                  <div className="p-6 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-[2rem] space-y-4">
+                    <div className="flex items-center gap-3 text-emerald-600">
+                      <FileSpreadsheet size={20} />
+                      <h4 className="font-bold text-sm uppercase tracking-tight">Excel Compatible Exports</h4>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                      <button onClick={() => handleExportCSV('projects')} className="py-3 bg-white dark:bg-slate-800 border border-slate-200 rounded-xl text-[9px] font-black uppercase hover:bg-emerald-50 transition-all">Projects CSV</button>
+                      <button onClick={() => handleExportCSV('expenses')} className="py-3 bg-white dark:bg-slate-800 border border-slate-200 rounded-xl text-[9px] font-black uppercase hover:bg-emerald-50 transition-all">Ledger CSV</button>
+                      <button onClick={() => handleExportCSV('inventory')} className="py-3 bg-white dark:bg-slate-800 border border-slate-200 rounded-xl text-[9px] font-black uppercase hover:bg-emerald-50 transition-all">Assets CSV</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeSection === 'import' && (
+              <div className="p-8 space-y-8">
+                <div className="flex items-center gap-4 bg-emerald-600 p-6 rounded-[2rem] text-white shadow-xl">
+                  <div className="p-4 bg-white/10 rounded-2xl"><UploadCloud size={32} /></div>
+                  <div>
+                    <h3 className="text-lg font-bold">Data Governance: Import</h3>
+                    <p className="text-[10px] font-bold uppercase text-emerald-200">Migration & Restoration Center</p>
+                  </div>
+                </div>
+
+                <div className="p-8 bg-rose-50 dark:bg-rose-900/10 border border-rose-200 dark:border-rose-800 rounded-[2.5rem] space-y-4">
+                   <div className="flex items-center gap-3 text-rose-600">
+                     <AlertTriangle size={24} />
+                     <h4 className="font-black text-sm uppercase tracking-tight">System Overwrite Protocol</h4>
+                   </div>
+                   <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-medium">
+                     Uploading a <strong>Master Backup</strong> file will completely replace all existing projects and financial records. This is an destructive operation intended for full system recovery.
+                   </p>
+                   <input type="file" accept=".json" className="hidden" ref={jsonFileInputRef} onChange={handleImportJSON} />
+                   <button 
+                    onClick={() => jsonFileInputRef.current?.click()}
+                    className="w-full py-4 bg-white dark:bg-slate-900 border-2 border-rose-200 rounded-2xl text-[10px] font-black uppercase tracking-widest text-rose-600 hover:bg-rose-600 hover:text-white transition-all flex items-center justify-center gap-2"
+                   >
+                     {importing ? <RefreshCw className="animate-spin" /> : <FileUp size={16} />} Select .JSON Master File
+                   </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                   <div className="p-6 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-[2rem] space-y-4">
+                      <div className="flex items-center gap-3 text-blue-600">
+                        {/* Fix: Added missing 'Users' import from 'lucide-react' */}
+                        <Users size={18} />
+                        <h4 className="font-bold text-[10px] uppercase tracking-widest">Supplier Bulk Upload</h4>
+                      </div>
+                      <input type="file" accept=".csv" className="hidden" ref={csvVendorInputRef} onChange={handleImportCSVVendors} />
+                      <button onClick={() => csvVendorInputRef.current?.click()} className="w-full py-10 bg-white dark:bg-slate-800 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2 hover:border-emerald-500 transition-all text-slate-400 hover:text-emerald-600">
+                         <FileSpreadsheet size={32} />
+                         <span className="text-[9px] font-black uppercase">Import CSV Suppliers</span>
+                      </button>
+                   </div>
+                   <div className="p-6 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-[2rem] space-y-4">
+                      <div className="flex items-center gap-3 text-blue-600">
+                        <Package size={18} />
+                        <h4 className="font-bold text-[10px] uppercase tracking-widest">Material Bulk Upload</h4>
+                      </div>
+                      <input type="file" accept=".csv" className="hidden" ref={csvMaterialInputRef} onChange={handleImportCSVMaterials} />
+                      <button onClick={() => csvMaterialInputRef.current?.click()} className="w-full py-10 bg-white dark:bg-slate-800 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2 hover:border-emerald-500 transition-all text-slate-400 hover:text-emerald-600">
+                         <FileSpreadsheet size={32} />
+                         <span className="text-[9px] font-black uppercase">Import CSV Materials</span>
+                      </button>
+                   </div>
+                </div>
+              </div>
+            )}
+
             {activeSection === 'profile' && (
               <div className="p-8">
                 <div className="flex items-center gap-6 mb-8">
@@ -205,18 +450,12 @@ CREATE TABLE expenses (
                     <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
                       This application communicates with a <strong>MySQL/PostgreSQL Database</strong> through a RESTful API Backend. The architecture follows modern standards for secure data persistence.
                     </p>
-                    <ol className="mt-4 space-y-2 text-xs text-slate-600 dark:text-slate-400 list-decimal list-inside">
-                      <li>Initialize a hosted SQL environment (e.g., AWS RDS, Vercel Postgres, or DigitalOcean).</li>
-                      <li>Execute the SQL script provided below to establish schema, indexing, and foreign keys.</li>
-                      <li>Deploy a Backend Bridge (Node.js/Express) using drivers like <code>mysql2</code> or <code>pg</code>.</li>
-                      <li>Update the <code>API_BASE_URL</code> in your configuration to point to your live backend.</li>
-                    </ol>
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Required Database Schema (SQL)</label>
-                  <pre className="w-full p-4 bg-slate-900 text-blue-400 rounded-2xl text-[10px] font-mono overflow-x-auto border border-slate-700">
+                  <pre className="w-full p-4 bg-slate-900 text-blue-400 rounded-2xl text-[10px] font-mono overflow-x-auto border border-slate-700 h-48 no-scrollbar">
                     {sqlSchema}
                   </pre>
                   <button onClick={() => copyToClipboard(sqlSchema)} className="flex items-center gap-2 text-[10px] font-bold text-blue-600 hover:underline uppercase tracking-widest mt-2">
@@ -228,7 +467,6 @@ CREATE TABLE expenses (
 
             {activeSection === 'master-lists' && (
               <div className="p-8 space-y-12">
-                {/* Global Quantity Settings */}
                 <div className="space-y-4 p-6 bg-blue-50/50 dark:bg-blue-900/10 rounded-[2rem] border border-blue-100 dark:border-blue-900/20">
                    <div className="flex items-center justify-between">
                      <div className="flex items-center gap-3">
@@ -247,12 +485,8 @@ CREATE TABLE expenses (
                        <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${allowDecimalStock ? 'translate-x-6' : 'translate-x-1'}`} />
                      </button>
                    </div>
-                   <p className="text-xs text-slate-600 dark:text-slate-400 italic">
-                      When enabled, inventory items can be recorded with decimal places (e.g., 1.5 Tons). If disabled, inputs are restricted to whole numbers.
-                   </p>
                 </div>
 
-                {/* Trade Categories */}
                 <div className="space-y-4">
                   <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2 text-sm uppercase tracking-widest">
                     <Layers size={18} className="text-blue-500" /> Trade Categories
@@ -264,7 +498,6 @@ CREATE TABLE expenses (
                       className="flex-1 px-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold outline-none dark:text-white"
                       value={newTradeCat}
                       onChange={e => setNewTradeCat(e.target.value)}
-                      onKeyPress={e => e.key === 'Enter' && newTradeCat && (addTradeCategory(newTradeCat), setNewTradeCat(''))}
                     />
                     <button onClick={() => { if(newTradeCat) { addTradeCategory(newTradeCat); setNewTradeCat(''); } }} className="p-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700"><Plus size={18} /></button>
                   </div>
@@ -272,56 +505,6 @@ CREATE TABLE expenses (
                     {tradeCategories.map(cat => (
                       <span key={cat} className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest dark:text-slate-300 shadow-sm">
                         {cat} <X size={10} className="cursor-pointer text-slate-400 hover:text-red-500" onClick={() => removeTradeCategory(cat)} />
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Stocking Units */}
-                <div className="space-y-4">
-                  <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2 text-sm uppercase tracking-widest">
-                    <Package size={18} className="text-emerald-500" /> Stocking Units
-                  </h3>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      placeholder="New unit (e.g. Bag, Ton)..." 
-                      className="flex-1 px-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold outline-none dark:text-white"
-                      value={newStockUnit}
-                      onChange={e => setNewStockUnit(e.target.value)}
-                      onKeyPress={e => e.key === 'Enter' && newStockUnit && (addStockingUnit(newStockUnit), setNewStockUnit(''))}
-                    />
-                    <button onClick={() => { if(newStockUnit) { addStockingUnit(newStockUnit); setNewStockUnit(''); } }} className="p-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700"><Plus size={18} /></button>
-                  </div>
-                  <div className="flex flex-wrap gap-2 p-3 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-700">
-                    {stockingUnits.map(unit => (
-                      <span key={unit} className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest dark:text-slate-300 shadow-sm">
-                        {unit} <X size={10} className="cursor-pointer text-slate-400 hover:text-red-500" onClick={() => removeStockingUnit(unit)} />
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Site Statuses */}
-                <div className="space-y-4">
-                  <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2 text-sm uppercase tracking-widest">
-                    <Activity size={18} className="text-amber-500" /> Project Statuses
-                  </h3>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      placeholder="New status..." 
-                      className="flex-1 px-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold outline-none dark:text-white"
-                      value={newSiteStatus}
-                      onChange={e => setNewSiteStatus(e.target.value)}
-                      onKeyPress={e => e.key === 'Enter' && newSiteStatus && (addSiteStatus(newSiteStatus), setNewSiteStatus(''))}
-                    />
-                    <button onClick={() => { if(newSiteStatus) { addSiteStatus(newSiteStatus); setNewSiteStatus(''); } }} className="p-2 bg-amber-600 text-white rounded-xl hover:bg-amber-700"><Plus size={18} /></button>
-                  </div>
-                  <div className="flex flex-wrap gap-2 p-3 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-700">
-                    {siteStatuses.map(status => (
-                      <span key={status} className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest dark:text-slate-300 shadow-sm">
-                        {status} <X size={10} className="cursor-pointer text-slate-400 hover:text-red-500" onClick={() => removeSiteStatus(status)} />
                       </span>
                     ))}
                   </div>
